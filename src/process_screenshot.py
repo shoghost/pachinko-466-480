@@ -86,6 +86,13 @@ def _y_to_value_fn(tick_y: List[int]) -> callable:
         if y >= ty[-1]:
             return float(tv[-1])
         i = int(np.searchsorted(ty, y) - 1)
+
+        # ★追加：念のため境界クランプ
+        if i >= len(ty) - 1:
+            i = len(ty) - 2
+        if i < 0:
+            i = 0
+
         y0, y1 = ty[i], ty[i + 1]
         v0, v1 = tv[i], tv[i + 1]
         return float(v0 + (v1 - v0) * ((y - y0) / (y1 - y0)))
