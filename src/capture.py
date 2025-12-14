@@ -1,8 +1,11 @@
-﻿import json
+﻿import hashlib
+import json
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import cv2
 from playwright.sync_api import sync_playwright
 
 DATE = datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%Y-%m-%d")
@@ -14,6 +17,63 @@ GRAPH_BASE = "https://x-arena.p-moba.net/graph.php"
 
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
 JPG_SIG = b"\xff\xd8\xff"
+
+# Minimum file size (1KB) to detect error pages/corrupted downloads
+MIN_IMAGE_SIZE = 1024
+# Minimum image dimensions to ensure valid graph images
+MIN_IMAGE_WIDTH = 400
+MIN_IMAGE_HEIGHT = 300
+
+def validate_image_data(body: bytes, url: str) -> None:
+    """
+    Validate that downloaded data is a proper image file.
+    Raises RuntimeError if validation fails.
+    """
+    # Check file size
+    if len(body) < MIN_IMAGE_SIZE:
+        raise RuntimeError(
+            f"Image too small: {len(body)} bytes (minimum {MIN_IMAGE_SIZE} bytes). "
+            f"URL: {url}"
+        )
+    
+    # Check magic bytes
+    is_png = body.startswith(PNG_SIG)
+    is_jpg = body.startswith(JPG_SIG)
+    
+    if not (is_png or is_jpg):
+        head = body[:120].decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"Invalid image format (not PNG/JPG). URL: {url}, head={head!r}"
+        )
+    
+    # Write to temporary location and verify cv2 can read it
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".png" if is_png else ".jpg", delete=False) as tmp:
+            tmp.write(body)
+            tmp_path = Path(tmp.name)
+        
+        img = cv2.imread(str(tmp_path))
+        
+        if img is None:
+            raise RuntimeError(
+                f"cv2.imread() failed to read the image. URL: {url}"
+            )
+        
+        # Check image dimensions
+        height, width = img.shape[:2]
+        if width < MIN_IMAGE_WIDTH or height < MIN_IMAGE_HEIGHT:
+            raise RuntimeError(
+                f"Image dimensions too small: {width}x{height} "
+                f"(minimum {MIN_IMAGE_WIDTH}x{MIN_IMAGE_HEIGHT}). URL: {url}"
+            )
+    finally:
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass  # Best effort cleanup
+
 
 def ensure_terms_agreed(page):
     # 規約があると画像がHTMLで返ってくることがあるので、先にトップへ一度行く
@@ -39,6 +99,11 @@ def main():
 
         ensure_terms_agreed(page)
 
+        # Track downloaded content to detect duplicates
+        downloaded_hashes = {}
+        # Allow some duplicates (e.g., maintenance periods), but fail if too many
+        MAX_ALLOWED_DUPLICATES = 3
+
         for m in machines:
             no = int(m["no"])
             out = OUT_DIR / f"{no}.png"
@@ -50,13 +115,35 @@ def main():
             body = resp.body()
             ct = (resp.headers.get("content-type") or "").lower()
 
+            # Check HTTP status and Content-Type
             is_image = ("image" in ct) or body.startswith(PNG_SIG) or body.startswith(JPG_SIG)
             if (not resp.ok) or (not is_image):
                 head = body[:120].decode("utf-8", errors="replace")
                 raise RuntimeError(f"Non-image response: status={resp.status} ct={ct} head={head!r}")
 
+            # Validate image data (size, format, cv2 readability, dimensions)
+            validate_image_data(body, url)
+
+            # Check for duplicate content (too many duplicates indicates error)
+            content_hash = hashlib.sha256(body).hexdigest()
+            if content_hash in downloaded_hashes:
+                prev_nos = downloaded_hashes[content_hash]
+                prev_nos.append(no)
+                
+                # Warn about duplicate but only fail if too many
+                print(f"Warning: machine {no} has identical content to machine(s) {prev_nos[:-1]}")
+                
+                if len(prev_nos) > MAX_ALLOWED_DUPLICATES:
+                    raise RuntimeError(
+                        f"Too many duplicate images detected ({len(prev_nos)} machines with same content: {prev_nos}). "
+                        f"This may indicate an error page or system-wide issue. Hash: {content_hash[:16]}..."
+                    )
+            else:
+                downloaded_hashes[content_hash] = [no]
+
+            # Save the validated image
             out.write_bytes(body)
-            print("saved", out, "from", url, "ct=", ct)
+            print("saved", out, "from", url, "ct=", ct, f"size={len(body)} bytes")
 
         context.close()
         browser.close()
