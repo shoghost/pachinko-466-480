@@ -102,7 +102,8 @@ def capture_graph_via_detail_page(page, no: int, detail_url: str, max_retries: i
             
             def handle_response(response):
                 nonlocal intercepted_data
-                if "graph.php" in response.url and response.ok:
+                # Match graph.php with query parameters for the specific machine
+                if ("graph.php" in response.url and f"id={no}" in response.url and response.ok):
                     try:
                         content_type = (response.headers.get("content-type") or "").lower()
                         body = response.body()
@@ -114,10 +115,8 @@ def capture_graph_via_detail_page(page, no: int, detail_url: str, max_retries: i
                         # Failed to capture this response, will try next one or fallback
                         print(f"  Warning: Failed to process response for machine {no}: {e}")
             
-            listener_added = False
             try:
                 page.on("response", handle_response)
-                listener_added = True
             except Exception as e:
                 print(f"  Warning: Failed to add response listener for machine {no}: {e}")
             
