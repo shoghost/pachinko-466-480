@@ -24,6 +24,11 @@ MIN_IMAGE_SIZE = 1024
 MIN_IMAGE_WIDTH = 400
 MIN_IMAGE_HEIGHT = 300
 
+# Wait time for graph to load on detail page (milliseconds)
+GRAPH_LOAD_WAIT_MS = 2000
+# Wait time between retries (milliseconds)
+RETRY_WAIT_MS = 1000
+
 def validate_image_data(body: bytes, url: str) -> None:
     """
     Validate that downloaded data is a proper image file.
@@ -122,7 +127,7 @@ def capture_graph_via_detail_page(page, no: int, detail_url: str, max_retries: i
             
             # Navigate to the detail page
             page.goto(detail_url, wait_until="domcontentloaded")
-            page.wait_for_timeout(2000)  # Wait for graph to load
+            page.wait_for_timeout(GRAPH_LOAD_WAIT_MS)  # Wait for graph to load
             
             # Check if we intercepted the image
             if intercepted_data:
@@ -173,7 +178,7 @@ def capture_graph_via_detail_page(page, no: int, detail_url: str, max_retries: i
             # If we get here, neither method worked
             if attempt < max_retries - 1:
                 print(f"  Machine {no}: Attempt {attempt + 1} failed, retrying...")
-                page.wait_for_timeout(1000)
+                page.wait_for_timeout(RETRY_WAIT_MS)
             else:
                 raise RuntimeError(
                     f"Failed to capture graph for machine {no} after {max_retries} attempts. "
@@ -183,7 +188,7 @@ def capture_graph_via_detail_page(page, no: int, detail_url: str, max_retries: i
         except Exception as e:
             if attempt < max_retries - 1:
                 print(f"  Machine {no}: Attempt {attempt + 1} error: {e}, retrying...")
-                page.wait_for_timeout(1000)
+                page.wait_for_timeout(RETRY_WAIT_MS)
             else:
                 raise
 
