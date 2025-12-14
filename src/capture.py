@@ -47,11 +47,12 @@ def validate_image_data(body: bytes, url: str) -> None:
         )
     
     # Write to temporary location and verify cv2 can read it
-    with tempfile.NamedTemporaryFile(suffix=".png" if is_png else ".jpg", delete=False) as tmp:
-        tmp_path = Path(tmp.name)
-    
+    tmp_path = None
     try:
-        tmp_path.write_bytes(body)
+        with tempfile.NamedTemporaryFile(suffix=".png" if is_png else ".jpg", delete=False) as tmp:
+            tmp.write(body)
+            tmp_path = Path(tmp.name)
+        
         img = cv2.imread(str(tmp_path))
         
         if img is None:
@@ -67,10 +68,11 @@ def validate_image_data(body: bytes, url: str) -> None:
                 f"(minimum {MIN_IMAGE_WIDTH}x{MIN_IMAGE_HEIGHT}). URL: {url}"
             )
     finally:
-        try:
-            tmp_path.unlink()
-        except Exception:
-            pass  # Best effort cleanup
+        if tmp_path is not None:
+            try:
+                tmp_path.unlink()
+            except Exception:
+                pass  # Best effort cleanup
 
 
 def ensure_terms_agreed(page):
@@ -99,6 +101,8 @@ def main():
 
         # Track downloaded content to detect duplicates
         downloaded_hashes = {}
+        # Allow some duplicates (e.g., maintenance periods), but fail if too many
+        MAX_ALLOWED_DUPLICATES = 3
 
         for m in machines:
             no = int(m["no"])
@@ -120,15 +124,22 @@ def main():
             # Validate image data (size, format, cv2 readability, dimensions)
             validate_image_data(body, url)
 
-            # Check for duplicate content (all files having same hash indicates error)
+            # Check for duplicate content (too many duplicates indicates error)
             content_hash = hashlib.sha256(body).hexdigest()
             if content_hash in downloaded_hashes:
-                prev_no = downloaded_hashes[content_hash]
-                raise RuntimeError(
-                    f"Duplicate image detected: machine {no} has identical content to machine {prev_no}. "
-                    f"This may indicate an error page or incorrect data. Hash: {content_hash[:16]}..."
-                )
-            downloaded_hashes[content_hash] = no
+                prev_nos = downloaded_hashes[content_hash]
+                prev_nos.append(no)
+                
+                # Warn about duplicate but only fail if too many
+                print(f"Warning: machine {no} has identical content to machine(s) {prev_nos[:-1]}")
+                
+                if len(prev_nos) > MAX_ALLOWED_DUPLICATES:
+                    raise RuntimeError(
+                        f"Too many duplicate images detected ({len(prev_nos)} machines with same content: {prev_nos}). "
+                        f"This may indicate an error page or system-wide issue. Hash: {content_hash[:16]}..."
+                    )
+            else:
+                downloaded_hashes[content_hash] = [no]
 
             # Save the validated image
             out.write_bytes(body)
