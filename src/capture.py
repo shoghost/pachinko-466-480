@@ -95,8 +95,6 @@ def capture_graph_via_detail_page(page, no: int, detail_url: str, max_retries: i
     
     Returns: (image_bytes, method_used)
     """
-    graph_url = f"{GRAPH_BASE}?id={no}&type=day&did=0"
-    
     for attempt in range(max_retries):
         try:
             # Method 1: Try to intercept the graph image request
@@ -112,10 +110,16 @@ def capture_graph_via_detail_page(page, no: int, detail_url: str, max_retries: i
                         if ("image" in content_type) or body.startswith(PNG_SIG) or body.startswith(JPG_SIG):
                             if len(body) >= MIN_IMAGE_SIZE:  # Quick size check
                                 intercepted_data = body
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        # Failed to capture this response, will try next one or fallback
+                        print(f"    Warning: Failed to process response for machine {no}: {e}")
             
-            page.on("response", handle_response)
+            listener_added = False
+            try:
+                page.on("response", handle_response)
+                listener_added = True
+            except Exception as e:
+                print(f"    Warning: Failed to add response listener for machine {no}: {e}")
             
             try:
                 # Navigate to the detail page
@@ -170,7 +174,11 @@ def capture_graph_via_detail_page(page, no: int, detail_url: str, max_retries: i
                         continue
                 
             finally:
-                page.remove_listener("response", handle_response)
+                if listener_added:
+                    try:
+                        page.remove_listener("response", handle_response)
+                    except Exception:
+                        pass  # Best effort cleanup
             
             # If we get here, neither method worked
             if attempt < max_retries - 1:
@@ -178,7 +186,7 @@ def capture_graph_via_detail_page(page, no: int, detail_url: str, max_retries: i
                 page.wait_for_timeout(1000)
             else:
                 raise RuntimeError(
-                    f"Failed to capture graph after {max_retries} attempts. "
+                    f"Failed to capture graph for machine {no} after {max_retries} attempts. "
                     f"Detail URL: {detail_url}"
                 )
                 
