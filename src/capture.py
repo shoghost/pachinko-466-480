@@ -1,4 +1,6 @@
-﻿import json
+﻿import hashlib
+import json
+import tempfile
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -45,27 +47,30 @@ def validate_image_data(body: bytes, url: str) -> None:
         )
     
     # Write to temporary location and verify cv2 can read it
-    import tempfile
     with tempfile.NamedTemporaryFile(suffix=".png" if is_png else ".jpg", delete=False) as tmp:
         tmp_path = Path(tmp.name)
+    
+    try:
+        tmp_path.write_bytes(body)
+        img = cv2.imread(str(tmp_path))
+        
+        if img is None:
+            raise RuntimeError(
+                f"cv2.imread() failed to read the image. URL: {url}"
+            )
+        
+        # Check image dimensions
+        height, width = img.shape[:2]
+        if width < MIN_IMAGE_WIDTH or height < MIN_IMAGE_HEIGHT:
+            raise RuntimeError(
+                f"Image dimensions too small: {width}x{height} "
+                f"(minimum {MIN_IMAGE_WIDTH}x{MIN_IMAGE_HEIGHT}). URL: {url}"
+            )
+    finally:
         try:
-            tmp_path.write_bytes(body)
-            img = cv2.imread(str(tmp_path))
-            
-            if img is None:
-                raise RuntimeError(
-                    f"cv2.imread() failed to read the image. URL: {url}"
-                )
-            
-            # Check image dimensions
-            height, width = img.shape[:2]
-            if width < MIN_IMAGE_WIDTH or height < MIN_IMAGE_HEIGHT:
-                raise RuntimeError(
-                    f"Image dimensions too small: {width}x{height} "
-                    f"(minimum {MIN_IMAGE_WIDTH}x{MIN_IMAGE_HEIGHT}). URL: {url}"
-                )
-        finally:
-            tmp_path.unlink(missing_ok=True)
+            tmp_path.unlink()
+        except Exception:
+            pass  # Best effort cleanup
 
 
 def ensure_terms_agreed(page):
@@ -116,7 +121,6 @@ def main():
             validate_image_data(body, url)
 
             # Check for duplicate content (all files having same hash indicates error)
-            import hashlib
             content_hash = hashlib.sha256(body).hexdigest()
             if content_hash in downloaded_hashes:
                 prev_no = downloaded_hashes[content_hash]
