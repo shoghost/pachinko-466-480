@@ -17,6 +17,8 @@ GRAPH_BASE = "https://x-arena.p-moba.net/graph.php"
 
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
 JPG_SIG = b"\xff\xd8\xff"
+GIF87_SIG = b"GIF87a"
+GIF89_SIG = b"GIF89a"
 
 # Minimum file size (1KB) to detect error pages/corrupted downloads
 MIN_IMAGE_SIZE = 1024
@@ -44,17 +46,19 @@ def validate_image_data(body: bytes, url: str) -> None:
     # Check magic bytes
     is_png = body.startswith(PNG_SIG)
     is_jpg = body.startswith(JPG_SIG)
+    is_gif = body.startswith(GIF87_SIG) or body.startswith(GIF89_SIG)
     
-    if not (is_png or is_jpg):
+    if not (is_png or is_jpg or is_gif):
         head = body[:120].decode("utf-8", errors="replace")
         raise RuntimeError(
-            f"Invalid image format (not PNG/JPG). URL: {url}, head={head!r}"
+            f"Invalid image format (not PNG/JPG/GIF). URL: {url}, head={head!r}"
         )
     
     # Write to temporary location and verify cv2 can read it
     tmp_path = None
     try:
-        with tempfile.NamedTemporaryFile(suffix=".png" if is_png else ".jpg", delete=False) as tmp:
+        suffix = ".png" if is_png else (".gif" if is_gif else ".jpg")
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
             tmp.write(body)
             tmp_path = Path(tmp.name)
         
@@ -135,8 +139,9 @@ def capture_graph_direct(page, no: int, max_retries: int = 3) -> tuple[bytes, st
                     if body and len(body) >= MIN_IMAGE_SIZE:
                         is_png = body.startswith(PNG_SIG)
                         is_jpg = body.startswith(JPG_SIG)
+                        is_gif = body.startswith(GIF87_SIG) or body.startswith(GIF89_SIG)
                         
-                        if is_png or is_jpg:
+                        if is_png or is_jpg or is_gif:
                             print(f"  Machine {no}: Captured via direct access (graph.php)")
                             return (body, "method0_direct")
                 
@@ -169,14 +174,20 @@ def capture_graph_via_detail_page(page, no: int, detail_url: str, max_retries: i
             def handle_response(response):
                 nonlocal intercepted_data
                 # Match graph.php with query parameters for the specific machine
-                if ("graph.php" in response.url and f"id={no}" in response.url and response.ok):
+                # Explicitly exclude game_machine_detail.php to avoid capturing wrong content
+                if ("graph.php" in response.url and f"id={no}" in response.url 
+                    and "game_machine_detail" not in response.url and response.ok):
                     try:
                         content_type = (response.headers.get("content-type") or "").lower()
                         body = response.body()
-                        # Check if it's actually an image
-                        if ("image" in content_type) or body.startswith(PNG_SIG) or body.startswith(JPG_SIG):
-                            if len(body) >= MIN_IMAGE_SIZE:  # Quick size check
-                                intercepted_data = body
+                        # Check if it's actually an image (PNG, JPG, or GIF)
+                        is_image = (("image" in content_type) or 
+                                    body.startswith(PNG_SIG) or 
+                                    body.startswith(JPG_SIG) or
+                                    body.startswith(GIF87_SIG) or 
+                                    body.startswith(GIF89_SIG))
+                        if is_image and len(body) >= MIN_IMAGE_SIZE:  # Quick size check
+                            intercepted_data = body
                     except Exception as e:
                         # Failed to capture this response, will try next one or fallback
                         print(f"  Warning: Failed to process response for machine {no}: {e}")
