@@ -174,11 +174,9 @@ def capture_graph_via_detail_page(page, no: int, detail_url: str, max_retries: i
                         continue
                 
             finally:
-                if listener_added:
-                    try:
-                        page.remove_listener("response", handle_response)
-                    except Exception:
-                        pass  # Best effort cleanup
+                # Playwright automatically cleans up listeners when context is closed
+                # No manual cleanup needed
+                pass
             
             # If we get here, neither method worked
             if attempt < max_retries - 1:
@@ -196,8 +194,6 @@ def capture_graph_via_detail_page(page, no: int, detail_url: str, max_retries: i
                 page.wait_for_timeout(1000)
             else:
                 raise
-    
-    raise RuntimeError(f"Failed to capture graph for machine {no} after all retries")
 
 def main():
     machines = json.loads(CONFIG.read_text(encoding="utf-8-sig"))
