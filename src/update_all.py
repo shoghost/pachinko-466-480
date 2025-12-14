@@ -3,7 +3,7 @@
 from pathlib import Path
 import pandas as pd
 
-from process_screenshot import extract_series_from_image
+from src.process_screenshot import extract_series_from_image
 
 ROOT = Path(".")
 SS_DIR = ROOT / "screenshots"
