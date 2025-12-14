@@ -12,7 +12,7 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 CONFIG = Path("config/machines.json")
 
 def main():
-    machines = json.loads(CONFIG.read_text(encoding="utf-8"))
+    machines = json.loads(CONFIG.read_text(encoding="utf-8-sig"))
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
