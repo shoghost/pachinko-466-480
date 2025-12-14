@@ -57,7 +57,7 @@ def main():
             if best_src:
                 graph_url = urljoin(page.url, best_src)
                 resp = page.request.get(graph_url)
-                resp.raise_for_status()
+                if not resp.ok:`n                    raise RuntimeError(f"Failed to fetch {graph_url}: {resp.status} {resp.status_text}")
                 out.write_bytes(resp.body())
                 print("saved graph image", out, "from", graph_url)
             else:
