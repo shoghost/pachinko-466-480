@@ -87,6 +87,110 @@ def ensure_terms_agreed(page):
     except Exception:
         pass
 
+
+def capture_graph_via_detail_page(page, no: int, detail_url: str, max_retries: int = 3) -> tuple[bytes, str]:
+    """
+    Method 1: Navigate to detail page and intercept graph.php request
+    Method 2: Take screenshot of graph element as fallback
+    
+    Returns: (image_bytes, method_used)
+    """
+    graph_url = f"{GRAPH_BASE}?id={no}&type=day&did=0"
+    
+    for attempt in range(max_retries):
+        try:
+            # Method 1: Try to intercept the graph image request
+            intercepted_data = None
+            
+            def handle_response(response):
+                nonlocal intercepted_data
+                if "graph.php" in response.url and response.ok:
+                    try:
+                        content_type = (response.headers.get("content-type") or "").lower()
+                        body = response.body()
+                        # Check if it's actually an image
+                        if ("image" in content_type) or body.startswith(PNG_SIG) or body.startswith(JPG_SIG):
+                            if len(body) >= MIN_IMAGE_SIZE:  # Quick size check
+                                intercepted_data = body
+                    except Exception:
+                        pass
+            
+            page.on("response", handle_response)
+            
+            try:
+                # Navigate to the detail page
+                page.goto(detail_url, wait_until="domcontentloaded")
+                page.wait_for_timeout(2000)  # Wait for graph to load
+                
+                # Check if we intercepted the image
+                if intercepted_data:
+                    print(f"  Machine {no}: Captured via Method 1 (network interception)")
+                    return (intercepted_data, "method1_intercept")
+                
+                # Method 2: Screenshot fallback
+                # Look for the graph image element
+                img_selectors = [
+                    f'img[src*="graph.php"][src*="id={no}"]',
+                    'img[src*="graph.php"]',
+                    '#graph_img',
+                    '.graph-image'
+                ]
+                
+                graph_element = None
+                for selector in img_selectors:
+                    try:
+                        if page.locator(selector).count() > 0:
+                            graph_element = page.locator(selector).first
+                            break
+                    except Exception:
+                        continue
+                
+                if graph_element:
+                    # Take screenshot of the graph element
+                    screenshot_bytes = graph_element.screenshot()
+                    print(f"  Machine {no}: Captured via Method 2 (element screenshot)")
+                    return (screenshot_bytes, "method2_screenshot")
+                
+                # If no specific element found, try to find the graph in a broader area
+                # Look for a container that might have the graph
+                container_selectors = [
+                    '.graph-container',
+                    '#graph_area',
+                    'div:has(img[src*="graph.php"])'
+                ]
+                
+                for selector in container_selectors:
+                    try:
+                        if page.locator(selector).count() > 0:
+                            container = page.locator(selector).first
+                            screenshot_bytes = container.screenshot()
+                            print(f"  Machine {no}: Captured via Method 2 (container screenshot)")
+                            return (screenshot_bytes, "method2_screenshot")
+                    except Exception:
+                        continue
+                
+            finally:
+                page.remove_listener("response", handle_response)
+            
+            # If we get here, neither method worked
+            if attempt < max_retries - 1:
+                print(f"  Machine {no}: Attempt {attempt + 1} failed, retrying...")
+                page.wait_for_timeout(1000)
+            else:
+                raise RuntimeError(
+                    f"Failed to capture graph after {max_retries} attempts. "
+                    f"Detail URL: {detail_url}"
+                )
+                
+        except Exception as e:
+            if attempt < max_retries - 1:
+                print(f"  Machine {no}: Attempt {attempt + 1} error: {e}, retrying...")
+                page.wait_for_timeout(1000)
+            else:
+                raise
+    
+    raise RuntimeError(f"Failed to capture graph for machine {no} after all retries")
+
 def main():
     machines = json.loads(CONFIG.read_text(encoding="utf-8-sig"))
 
@@ -106,23 +210,14 @@ def main():
 
         for m in machines:
             no = int(m["no"])
+            detail_url = m.get("url", f"https://x-arena.p-moba.net/game_machine_detail.php?id={no}")
             out = OUT_DIR / f"{no}.png"
 
-            url = f"{GRAPH_BASE}?id={no}&type=day&did=0"
-
-            # Refererを付けると弾かれにくいサイトがある
-            resp = page.request.get(url, headers={"Referer": "https://x-arena.p-moba.net/"})
-            body = resp.body()
-            ct = (resp.headers.get("content-type") or "").lower()
-
-            # Check HTTP status and Content-Type
-            is_image = ("image" in ct) or body.startswith(PNG_SIG) or body.startswith(JPG_SIG)
-            if (not resp.ok) or (not is_image):
-                head = body[:120].decode("utf-8", errors="replace")
-                raise RuntimeError(f"Non-image response: status={resp.status} ct={ct} head={head!r}")
-
+            # Use the new method: navigate to detail page and capture graph
+            body, method = capture_graph_via_detail_page(page, no, detail_url)
+            
             # Validate image data (size, format, cv2 readability, dimensions)
-            validate_image_data(body, url)
+            validate_image_data(body, detail_url)
 
             # Check for duplicate content (too many duplicates indicates error)
             content_hash = hashlib.sha256(body).hexdigest()
@@ -143,7 +238,7 @@ def main():
 
             # Save the validated image
             out.write_bytes(body)
-            print("saved", out, "from", url, "ct=", ct, f"size={len(body)} bytes")
+            print(f"  Saved {out} (size={len(body)} bytes, method={method})")
 
         context.close()
         browser.close()
