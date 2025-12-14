@@ -146,11 +146,8 @@ def capture_graph_direct(page, no: int, max_retries: int = 3) -> tuple[bytes, st
                     
             except Exception as e:
                 if attempt < max_retries - 1:
-                    print(f"  Machine {no}: Direct access attempt {attempt + 1} error: {e}, retrying...")
+                    print(f"  Machine {no}: Direct access attempt {attempt + 1} error: {str(e)}, retrying...")
                     page.wait_for_timeout(RETRY_WAIT_MS)
-                else:
-                    # All direct access attempts failed for this graph type
-                    print(f"  Machine {no}: Direct access failed after {max_retries} attempts: {e}")
     
     # If we get here, direct access failed
     raise RuntimeError(f"Failed to capture graph directly for machine {no}")
@@ -293,7 +290,7 @@ def main():
                 # Method 0: Try direct access to graph.php
                 body, method = capture_graph_direct(page, no)
             except Exception as e:
-                print(f"  Machine {no}: Direct access failed ({e}), trying detail page method...")
+                print(f"  Machine {no}: Direct access failed ({str(e)}), trying detail page method...")
                 # Method 1 & 2: Fallback to detail page approach
                 body, method = capture_graph_via_detail_page(page, no, detail_url)
             
