@@ -107,7 +107,8 @@ def capture_graph_direct(page, no: int, max_retries: int = 3) -> tuple[bytes, st
     
     Returns: (image_bytes, method_used)
     """
-    # Try day graphs (most common)
+    # Try day graphs (most common type)
+    # Structured as a list for potential future extensibility (week, month types)
     graph_types = ["day"]
     
     for graph_type in graph_types:
