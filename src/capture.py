@@ -112,71 +112,64 @@ def capture_graph_via_detail_page(page, no: int, detail_url: str, max_retries: i
                                 intercepted_data = body
                     except Exception as e:
                         # Failed to capture this response, will try next one or fallback
-                        print(f"    Warning: Failed to process response for machine {no}: {e}")
+                        print(f"  Warning: Failed to process response for machine {no}: {e}")
             
             listener_added = False
             try:
                 page.on("response", handle_response)
                 listener_added = True
             except Exception as e:
-                print(f"    Warning: Failed to add response listener for machine {no}: {e}")
+                print(f"  Warning: Failed to add response listener for machine {no}: {e}")
             
-            try:
-                # Navigate to the detail page
-                page.goto(detail_url, wait_until="domcontentloaded")
-                page.wait_for_timeout(2000)  # Wait for graph to load
-                
-                # Check if we intercepted the image
-                if intercepted_data:
-                    print(f"  Machine {no}: Captured via Method 1 (network interception)")
-                    return (intercepted_data, "method1_intercept")
-                
-                # Method 2: Screenshot fallback
-                # Look for the graph image element
-                img_selectors = [
-                    f'img[src*="graph.php"][src*="id={no}"]',
-                    'img[src*="graph.php"]',
-                    '#graph_img',
-                    '.graph-image'
-                ]
-                
-                graph_element = None
-                for selector in img_selectors:
-                    try:
-                        if page.locator(selector).count() > 0:
-                            graph_element = page.locator(selector).first
-                            break
-                    except Exception:
-                        continue
-                
-                if graph_element:
-                    # Take screenshot of the graph element
-                    screenshot_bytes = graph_element.screenshot()
-                    print(f"  Machine {no}: Captured via Method 2 (element screenshot)")
-                    return (screenshot_bytes, "method2_screenshot")
-                
-                # If no specific element found, try to find the graph in a broader area
-                # Look for a container that might have the graph
-                container_selectors = [
-                    '.graph-container',
-                    '#graph_area',
-                    'div:has(img[src*="graph.php"])'
-                ]
-                
-                for selector in container_selectors:
-                    try:
-                        if page.locator(selector).count() > 0:
-                            container = page.locator(selector).first
-                            screenshot_bytes = container.screenshot()
-                            print(f"  Machine {no}: Captured via Method 2 (container screenshot)")
-                            return (screenshot_bytes, "method2_screenshot")
-                    except Exception:
-                        continue
-                
-            finally:
-                # Playwright automatically cleans up listeners when context is closed
-                # No manual cleanup needed
-                pass
+            # Navigate to the detail page
+            page.goto(detail_url, wait_until="domcontentloaded")
+            page.wait_for_timeout(2000)  # Wait for graph to load
+            
+            # Check if we intercepted the image
+            if intercepted_data:
+                print(f"  Machine {no}: Captured via Method 1 (network interception)")
+                return (intercepted_data, "method1_intercept")
+            
+            # Method 2: Screenshot fallback
+            # Look for the graph image element
+            img_selectors = [
+                f'img[src*="graph.php"][src*="id={no}"]',
+                'img[src*="graph.php"]',
+                '#graph_img',
+                '.graph-image'
+            ]
+            
+            graph_element = None
+            for selector in img_selectors:
+                try:
+                    if page.locator(selector).count() > 0:
+                        graph_element = page.locator(selector).first
+                        break
+                except Exception:
+                    continue
+            
+            if graph_element:
+                # Take screenshot of the graph element
+                screenshot_bytes = graph_element.screenshot()
+                print(f"  Machine {no}: Captured via Method 2 (element screenshot)")
+                return (screenshot_bytes, "method2_screenshot")
+            
+            # If no specific element found, try to find the graph in a broader area
+            # Look for a container that might have the graph
+            container_selectors = [
+                '.graph-container',
+                '#graph_area'
+            ]
+            
+            for selector in container_selectors:
+                try:
+                    if page.locator(selector).count() > 0:
+                        container = page.locator(selector).first
+                        screenshot_bytes = container.screenshot()
+                        print(f"  Machine {no}: Captured via Method 2 (container screenshot)")
+                        return (screenshot_bytes, "method2_screenshot")
+                except Exception:
+                    continue
             
             # If we get here, neither method worked
             if attempt < max_retries - 1:
