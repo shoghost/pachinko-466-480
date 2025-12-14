@@ -80,17 +80,80 @@ def validate_image_data(body: bytes, url: str) -> None:
                 pass  # Best effort cleanup
 
 
-def ensure_terms_agreed(page):
-    # 規約があると画像がHTMLで返ってくることがあるので、先にトップへ一度行く
-    page.goto("https://x-arena.p-moba.net/", wait_until="domcontentloaded")
-    page.wait_for_timeout(500)
+def ensure_terms_agreed(page, target_url=None):
+    """
+    規約同意を確認し、必要であれば同意する。
+    target_url が指定されている場合、同意後にそのURLにアクセスする。
+    """
+    # 現在のページまたはトップページで規約同意ボタンをチェック
     try:
         if page.locator("text=利用規約に同意する").count() > 0:
             page.click("text=利用規約に同意する")
             page.wait_for_load_state("networkidle")
-            page.wait_for_timeout(500)
+            page.wait_for_timeout(1000)
+            
+            # 同意後、target_url があれば再度アクセス
+            if target_url:
+                page.goto(target_url, wait_until="networkidle")
+                page.wait_for_timeout(500)
     except Exception:
         pass
+
+
+def capture_graph_direct(page, no: int, max_retries: int = 3) -> tuple[bytes, str]:
+    """
+    graph.php に直接アクセスして画像を取得する。
+    規約同意が必要な場合は自動的に同意してリトライする。
+    
+    Returns: (image_bytes, method_used)
+    """
+    # Try day, week, month graphs - day is most common
+    graph_types = ["day"]
+    
+    for graph_type in graph_types:
+        graph_url = f"{GRAPH_BASE}?id={no}&type={graph_type}&did=0"
+        
+        for attempt in range(max_retries):
+            try:
+                # Navigate to graph URL
+                response = page.goto(graph_url, wait_until="domcontentloaded")
+                page.wait_for_timeout(500)
+                
+                # Check if we were redirected to terms agreement page
+                if "利用規約" in page.content() or page.locator("text=利用規約に同意する").count() > 0:
+                    # Terms agreement required - agree and retry
+                    ensure_terms_agreed(page, graph_url)
+                    response = page.goto(graph_url, wait_until="domcontentloaded")
+                    page.wait_for_timeout(500)
+                
+                # Get the response body
+                if response and response.ok:
+                    body = response.body()
+                    
+                    # Check if it's a valid image
+                    if body and len(body) >= MIN_IMAGE_SIZE:
+                        is_png = body.startswith(PNG_SIG)
+                        is_jpg = body.startswith(JPG_SIG)
+                        
+                        if is_png or is_jpg:
+                            print(f"  Machine {no}: Captured via direct access (graph.php)")
+                            return (body, "method0_direct")
+                
+                # If we get here, the response was not valid
+                if attempt < max_retries - 1:
+                    print(f"  Machine {no}: Direct access attempt {attempt + 1} failed, retrying...")
+                    page.wait_for_timeout(RETRY_WAIT_MS)
+                    
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    print(f"  Machine {no}: Direct access attempt {attempt + 1} error: {e}, retrying...")
+                    page.wait_for_timeout(RETRY_WAIT_MS)
+                else:
+                    # All direct access attempts failed
+                    print(f"  Machine {no}: Direct access failed after {max_retries} attempts")
+    
+    # If we get here, direct access failed
+    raise RuntimeError(f"Failed to capture graph directly for machine {no}")
 
 
 def capture_graph_via_detail_page(page, no: int, detail_url: str, max_retries: int = 3) -> tuple[bytes, str]:
@@ -127,6 +190,11 @@ def capture_graph_via_detail_page(page, no: int, detail_url: str, max_retries: i
             
             # Navigate to the detail page
             page.goto(detail_url, wait_until="domcontentloaded")
+            page.wait_for_timeout(500)
+            
+            # Check for terms agreement on detail page
+            ensure_terms_agreed(page, detail_url)
+            
             page.wait_for_timeout(GRAPH_LOAD_WAIT_MS)  # Wait for graph to load
             
             # Check if we intercepted the image
@@ -202,6 +270,9 @@ def main():
         page.set_default_timeout(60000)
         page.set_default_navigation_timeout(60000)
 
+        # Ensure terms are agreed on top page first
+        page.goto("https://x-arena.p-moba.net/", wait_until="domcontentloaded")
+        page.wait_for_timeout(500)
         ensure_terms_agreed(page)
 
         # Track downloaded content to detect duplicates
@@ -214,8 +285,17 @@ def main():
             detail_url = m.get("url", f"https://x-arena.p-moba.net/game_machine_detail.php?id={no}")
             out = OUT_DIR / f"{no}.png"
 
-            # Use the new method: navigate to detail page and capture graph
-            body, method = capture_graph_via_detail_page(page, no, detail_url)
+            # Try to capture graph - first directly, then via detail page
+            body = None
+            method = None
+            
+            try:
+                # Method 0: Try direct access to graph.php
+                body, method = capture_graph_direct(page, no)
+            except Exception as e:
+                print(f"  Machine {no}: Direct access failed ({e}), trying detail page method...")
+                # Method 1 & 2: Fallback to detail page approach
+                body, method = capture_graph_via_detail_page(page, no, detail_url)
             
             # Validate image data (size, format, cv2 readability, dimensions)
             validate_image_data(body, detail_url)
