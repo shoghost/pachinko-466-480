@@ -107,7 +107,7 @@ def capture_graph_direct(page, no: int, max_retries: int = 3) -> tuple[bytes, st
     
     Returns: (image_bytes, method_used)
     """
-    # Try day, week, month graphs - day is most common
+    # Try day graphs (most common)
     graph_types = ["day"]
     
     for graph_type in graph_types:
@@ -120,7 +120,7 @@ def capture_graph_direct(page, no: int, max_retries: int = 3) -> tuple[bytes, st
                 page.wait_for_timeout(500)
                 
                 # Check if we were redirected to terms agreement page
-                if "利用規約" in page.content() or page.locator("text=利用規約に同意する").count() > 0:
+                if page.locator("text=利用規約に同意する").count() > 0:
                     # Terms agreement required - agree and retry
                     ensure_terms_agreed(page, graph_url)
                     response = page.goto(graph_url, wait_until="domcontentloaded")
@@ -149,8 +149,8 @@ def capture_graph_direct(page, no: int, max_retries: int = 3) -> tuple[bytes, st
                     print(f"  Machine {no}: Direct access attempt {attempt + 1} error: {e}, retrying...")
                     page.wait_for_timeout(RETRY_WAIT_MS)
                 else:
-                    # All direct access attempts failed
-                    print(f"  Machine {no}: Direct access failed after {max_retries} attempts")
+                    # All direct access attempts failed for this graph type
+                    print(f"  Machine {no}: Direct access failed after {max_retries} attempts: {e}")
     
     # If we get here, direct access failed
     raise RuntimeError(f"Failed to capture graph directly for machine {no}")
